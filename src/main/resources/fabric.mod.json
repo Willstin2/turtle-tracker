@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "turtle_tracker",
+  "version": "${version}",
+  "name": "Turtle Tracker",
+  "description": "A mod that tracks and highlights sea turtles around the player",
+  "authors": [
+    "YourName"
+  ],
+  "contact": {
+    "homepage": "https://github.com/yourusername/turtle-tracker",
+    "sources": "https://github.com/yourusername/turtle-tracker"
+  },
+  "license": "MIT",
+  "icon": "assets/turtle_tracker/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.turtletracker.TurtleTrackerMod"
+    ],
+    "client": [
+      "com.turtletracker.TurtleTrackerClient"
+    ]
+  },
+  "mixins": [
+    "turtle_tracker.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "minecraft": "~${minecraft_version}",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "another-mod": "*"
+  }
+}
