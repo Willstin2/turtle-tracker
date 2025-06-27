@@ -49,6 +49,7 @@ public class TurtleTrackerClient implements ClientModInitializer {
      * Register all the event handlers needed for our mod to function
      * This includes tick events for updating turtle positions and render events
      */
+    @SuppressWarnings("deprecation")
     private void registerEventHandlers() {
         // Register a client tick event to continuously update turtle tracking
         // This runs every game tick (20 times per second) on the client
@@ -61,8 +62,10 @@ public class TurtleTrackerClient implements ClientModInitializer {
         
         // Register the HUD render callback to draw our UI overlay
         // This renders the turtle count on the screen
-        HudRenderCallback.EVENT.register((matrixStack, tickDelta) -> {
-            uiOverlay.render(matrixStack, turtleTracker.getTurtleCount());
+        // Note: HudRenderCallback is deprecated in favor of HudLayerRegistrationCallback
+        // but we'll use it for simplicity in this version
+        HudRenderCallback.EVENT.register((guiGraphics, tickDelta) -> {
+            uiOverlay.render(guiGraphics, turtleTracker.getTurtleCount());
         });
         
         // Register world render events for drawing highlights and lines to turtles

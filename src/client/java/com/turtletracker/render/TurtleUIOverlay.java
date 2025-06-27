@@ -31,8 +31,8 @@ public class TurtleUIOverlay {
     public void render(GuiGraphics guiGraphics, int turtleCount) {
         Minecraft client = Minecraft.getInstance();
         
-        // Don't render if we're not in a world or if the debug screen is open
-        if (client.level == null || client.options.renderDebug) {
+        // Don't render if we're not in a world or if F3 debug screen is open
+        if (client.level == null || client.getDebugOverlay().showDebugScreen()) {
             return;
         }
         
@@ -110,7 +110,7 @@ public class TurtleUIOverlay {
     public void renderDetailed(GuiGraphics guiGraphics, int turtleCount, int visibleCount) {
         Minecraft client = Minecraft.getInstance();
         
-        if (client.level == null || client.options.renderDebug) {
+        if (client.level == null || client.getDebugOverlay().showDebugScreen()) {
             return;
         }
         
