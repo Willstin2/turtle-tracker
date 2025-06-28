@@ -1,222 +1,128 @@
 package com.turtletracker.render;
 
-import com.mojang.blaze3d.vertex.*;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.minecraft.client.Camera;
-import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.animal.Turtle;
+import net.minecraft.client.Minecraft;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.world.phys.Vec3;
-import org.joml.Matrix4f;
-import org.lwjgl.opengl.GL11;
+import com.turtletracker.TurtleTrackerMod;
 
 import java.util.List;
 
 /**
- * Handles rendering visual effects for turtle tracking using basic OpenGL calls
- * This version uses minimal APIs to avoid compatibility issues with 1.21.5 changes
+ * Turtle renderer that uses particles to create tracer effects
+ * This approach should be safer than custom OpenGL rendering
  */
 public class TurtleHighlightRenderer {
     
-    // Rendering constants
-    private static final float HIGHLIGHT_SIZE = 1.3f;  
-    private static final double MAX_LINE_DISTANCE = 48.0; 
+    private static final double MAX_TRACER_DISTANCE = 48.0;
+    private static final int PARTICLES_PER_LINE = 8; // Number of particles along each tracer line
+    private int tickCounter = 0;
+    private int lastVisibleCount = -1;
 
     /**
      * Main render method called during world rendering
-     * Only renders effects for turtles that are visible (not behind blocks)
+     * Creates particle tracers and glow effects for visible turtles
+     * 
+     * @param context World render context providing camera and matrix information
+     * @param visibleTurtles List of turtles that are visible to the player (LOS check passed)
+     * @param allTurtles List of all turtles (including those behind walls)
      */
     public void render(WorldRenderContext context, List<Turtle> visibleTurtles, List<Turtle> allTurtles) {
-        // Only render for visible turtles (those that pass line-of-sight check)
+        // Only render effects for visible turtles (those that pass line-of-sight check)
         if (visibleTurtles.isEmpty()) {
+            if (lastVisibleCount > 0) {
+                lastVisibleCount = 0;
+                TurtleTrackerMod.LOGGER.debug("No visible turtles - effects cleared");
+            }
             return;
         }
         
-        // Get camera information for rendering calculations
-        Camera camera = context.camera();
-        Vec3 cameraPos = camera.getPosition();
-        PoseStack poseStack = context.matrixStack();
-        
-        try {
-            // Set up basic OpenGL state
-            setupOpenGLState();
-            
-            // Render effects for visible turtles only
-            renderTurtleEffects(poseStack, visibleTurtles, cameraPos);
-            
-        } finally {
-            // Restore OpenGL state
-            restoreOpenGLState();
-        }
-    }
-    
-    /**
-     * Set up basic OpenGL state using direct GL calls
-     */
-    private void setupOpenGLState() {
-        // Save current state
-        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-        
-        // Enable blending for transparency
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        
-        // Disable depth testing so effects render on top
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-        
-        // Set line width
-        GL11.glLineWidth(3.0f);
-        
-        // Disable texturing
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-    }
-    
-    /**
-     * Restore OpenGL state
-     */
-    private void restoreOpenGLState() {
-        // Restore previous state
-        GL11.glPopAttrib();
-    }
-    
-    /**
-     * Render both highlight boxes and tracer lines for visible turtles
-     */
-    private void renderTurtleEffects(PoseStack poseStack, List<Turtle> visibleTurtles, Vec3 cameraPos) {
         Minecraft client = Minecraft.getInstance();
-        if (client.player == null) return;
+        if (client.player == null || client.level == null) return;
         
-        // Get player position (where lines start from)
-        Vec3 playerPos = client.player.position().add(0, client.player.getEyeHeight(), 0);
+        // Increment tick counter for animation timing
+        tickCounter++;
         
-        // Set up the pose stack
-        poseStack.pushPose();
-        poseStack.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
+        // Apply glow effects to visible turtles
+        applyTurtleGlow(visibleTurtles);
         
-        // Get the transformation matrix
-        Matrix4f matrix = poseStack.last().pose();
-        
-        // Apply the matrix transformation
-        GL11.glPushMatrix();
-        GL11.glMultMatrixf(matrixToFloatArray(matrix));
-        
-        try {
-            // Render highlight boxes around turtles
-            renderHighlightBoxes(visibleTurtles);
-            
-            // Render tracer lines from player to turtles
-            renderTracerLines(visibleTurtles, playerPos);
-            
-        } finally {
-            GL11.glPopMatrix();
+        // Create particle tracers every few ticks (not every tick to avoid spam)
+        if (tickCounter % 3 == 0) { // Every 3 ticks = ~6 times per second
+            createParticleTracers(visibleTurtles, client);
         }
         
-        poseStack.popPose();
+        // Log visible turtle information (only when count changes)
+        if (visibleTurtles.size() != lastVisibleCount) {
+            lastVisibleCount = visibleTurtles.size();
+            TurtleTrackerMod.LOGGER.info("Tracking {} visible turtles with glow + particle tracers", 
+                                       visibleTurtles.size());
+        }
     }
     
     /**
-     * Render semi-transparent highlight boxes around turtles using immediate mode
+     * Apply glow effects to make visible turtles stand out
      */
-    private void renderHighlightBoxes(List<Turtle> visibleTurtles) {
-        // Set color for highlights (green with transparency)
-        GL11.glColor4f(0.0f, 1.0f, 0.0f, 0.4f);
-        
+    private void applyTurtleGlow(List<Turtle> visibleTurtles) {
         for (Turtle turtle : visibleTurtles) {
-            Vec3 turtlePos = turtle.position();
-            float width = turtle.getBbWidth() * HIGHLIGHT_SIZE;
-            float height = turtle.getBbHeight() * HIGHLIGHT_SIZE;
-            
-            // Draw a wireframe box around the turtle
-            drawWireframeBox(turtlePos, width, height);
+            // Make the turtle glow using Minecraft's built-in glow effect
+            if (!turtle.hasGlowingTag()) {
+                turtle.setGlowingTag(true);
+            }
         }
     }
     
     /**
-     * Render tracer lines from player to turtles
+     * Create particle tracers from player to visible turtles
      */
-    private void renderTracerLines(List<Turtle> visibleTurtles, Vec3 playerPos) {
-        // Set color for lines (bright yellow)
-        GL11.glColor4f(1.0f, 1.0f, 0.0f, 0.8f);
-        
-        GL11.glBegin(GL11.GL_LINES);
+    private void createParticleTracers(List<Turtle> visibleTurtles, Minecraft client) {
+        // Get player eye position (where tracers start from)
+        Vec3 playerPos = client.player.position().add(0, client.player.getEyeHeight(), 0);
         
         for (Turtle turtle : visibleTurtles) {
             Vec3 turtlePos = turtle.position().add(0, turtle.getBbHeight() / 2, 0);
             double distance = playerPos.distanceTo(turtlePos);
             
-            if (distance <= MAX_LINE_DISTANCE) {
-                // Calculate alpha based on distance
-                float alpha = (float) Math.max(0.4, 1.0 - (distance / MAX_LINE_DISTANCE));
-                GL11.glColor4f(1.0f, 1.0f, 0.0f, alpha);
-                
-                // Draw line from player to turtle center
-                GL11.glVertex3d(playerPos.x, playerPos.y, playerPos.z);
-                GL11.glVertex3d(turtlePos.x, turtlePos.y, turtlePos.z);
+            if (distance <= MAX_TRACER_DISTANCE && distance > 2.0) { // Don't draw for very close turtles
+                createParticleLine(client, playerPos, turtlePos, distance);
+            }
+        }
+    }
+    
+    /**
+     * Create a line of particles between two points
+     */
+    private void createParticleLine(Minecraft client, Vec3 start, Vec3 end, double distance) {
+        // Calculate the vector from start to end
+        Vec3 direction = end.subtract(start);
+        
+        // Create particles along the line
+        for (int i = 1; i < PARTICLES_PER_LINE; i++) { // Skip start and end points
+            double progress = (double) i / PARTICLES_PER_LINE;
+            Vec3 particlePos = start.add(direction.scale(progress));
+            
+            // Use different particle types based on distance for visual variety
+            if (distance < 16.0) {
+                // Close turtles: bright yellow particles
+                client.level.addParticle(ParticleTypes.END_ROD,
+                    particlePos.x, particlePos.y, particlePos.z,
+                    0.0, 0.0, 0.0);
+            } else if (distance < 32.0) {
+                // Medium distance: electric spark particles
+                client.level.addParticle(ParticleTypes.ELECTRIC_SPARK,
+                    particlePos.x, particlePos.y, particlePos.z,
+                    0.0, 0.0, 0.0);
+            } else {
+                // Far turtles: enchanting glyphs
+                client.level.addParticle(ParticleTypes.ENCHANT,
+                    particlePos.x, particlePos.y, particlePos.z,
+                    0.0, 0.1, 0.0);
             }
         }
         
-        GL11.glEnd();
-    }
-    
-    /**
-     * Draw a wireframe box using immediate mode OpenGL
-     */
-    private void drawWireframeBox(Vec3 pos, float width, float height) {
-        float halfWidth = width / 2.0f;
-        float x = (float) pos.x;
-        float y = (float) pos.y;
-        float z = (float) pos.z;
-        
-        GL11.glBegin(GL11.GL_LINES);
-        
-        // Bottom face edges
-        GL11.glVertex3f(x - halfWidth, y, z - halfWidth);
-        GL11.glVertex3f(x + halfWidth, y, z - halfWidth);
-        
-        GL11.glVertex3f(x + halfWidth, y, z - halfWidth);
-        GL11.glVertex3f(x + halfWidth, y, z + halfWidth);
-        
-        GL11.glVertex3f(x + halfWidth, y, z + halfWidth);
-        GL11.glVertex3f(x - halfWidth, y, z + halfWidth);
-        
-        GL11.glVertex3f(x - halfWidth, y, z + halfWidth);
-        GL11.glVertex3f(x - halfWidth, y, z - halfWidth);
-        
-        // Top face edges
-        float topY = y + height;
-        GL11.glVertex3f(x - halfWidth, topY, z - halfWidth);
-        GL11.glVertex3f(x + halfWidth, topY, z - halfWidth);
-        
-        GL11.glVertex3f(x + halfWidth, topY, z - halfWidth);
-        GL11.glVertex3f(x + halfWidth, topY, z + halfWidth);
-        
-        GL11.glVertex3f(x + halfWidth, topY, z + halfWidth);
-        GL11.glVertex3f(x - halfWidth, topY, z + halfWidth);
-        
-        GL11.glVertex3f(x - halfWidth, topY, z + halfWidth);
-        GL11.glVertex3f(x - halfWidth, topY, z - halfWidth);
-        
-        // Vertical edges
-        GL11.glVertex3f(x - halfWidth, y, z - halfWidth);
-        GL11.glVertex3f(x - halfWidth, topY, z - halfWidth);
-        
-        GL11.glVertex3f(x + halfWidth, y, z - halfWidth);
-        GL11.glVertex3f(x + halfWidth, topY, z - halfWidth);
-        
-        GL11.glVertex3f(x + halfWidth, y, z + halfWidth);
-        GL11.glVertex3f(x + halfWidth, topY, z + halfWidth);
-        
-        GL11.glVertex3f(x - halfWidth, y, z + halfWidth);
-        GL11.glVertex3f(x - halfWidth, topY, z + halfWidth);
-        
-        GL11.glEnd();
-    }
-    
-    /**
-     * Convert Matrix4f to float array for OpenGL
-     */
-    private float[] matrixToFloatArray(Matrix4f matrix) {
-        float[] result = new float[16];
-        matrix.get(result);
-        return result;
+        // Add a special particle at the turtle location for emphasis
+        client.level.addParticle(ParticleTypes.TOTEM_OF_UNDYING,
+            end.x, end.y, end.z,
+            0.0, 0.0, 0.0);
     }
 }
