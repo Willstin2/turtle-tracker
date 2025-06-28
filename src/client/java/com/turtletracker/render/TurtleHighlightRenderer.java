@@ -1,130 +1,163 @@
 package com.turtletracker.render;
 
+import com.mojang.blaze3d.vertex.*;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.minecraft.world.entity.animal.Turtle;
+import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
-import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.world.entity.animal.Turtle;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.AABB;
+import org.joml.Matrix4f;
 import com.turtletracker.TurtleTrackerMod;
 
 import java.util.List;
 
 /**
- * Minimal turtle renderer that uses only guaranteed-working effects
- * Focuses on glow + simple particle tracers
+ * Working turtle renderer for Minecraft 1.21.5 using the new RenderLayer system
+ * Creates highlighted boxes and tracer lines for visible turtles
  */
 public class TurtleHighlightRenderer {
     
     private static final double MAX_TRACER_DISTANCE = 48.0;
-    private int tickCounter = 0;
+    private static final float HIGHLIGHT_EXPANSION = 0.3f; // How much to expand the highlight box
     private int lastVisibleCount = -1;
 
     /**
-     * Main render method called during world rendering
-     * Applies basic glow and particle effects to visible turtles
+     * Main render method using the new 1.21.5 rendering system
      */
     public void render(WorldRenderContext context, List<Turtle> visibleTurtles, List<Turtle> allTurtles) {
-        // Only render effects for visible turtles (those that pass line-of-sight check)
         if (visibleTurtles.isEmpty()) {
             if (lastVisibleCount > 0) {
                 lastVisibleCount = 0;
-                TurtleTrackerMod.LOGGER.debug("No visible turtles - effects cleared");
+                TurtleTrackerMod.LOGGER.debug("No visible turtles");
             }
             return;
         }
         
         Minecraft client = Minecraft.getInstance();
-        if (client.player == null || client.level == null) return;
+        if (client.player == null) return;
         
-        // Increment tick counter
-        tickCounter++;
+        Camera camera = context.camera();
+        Vec3 cameraPos = camera.getPosition();
+        PoseStack poseStack = context.matrixStack();
         
-        // Apply basic visual effects to make turtles stand out
-        applyBasicEffects(visibleTurtles, client);
+        // Get the buffer source from context (new 1.21.5 way)
+        MultiBufferSource.BufferSource bufferSource = client.renderBuffers().bufferSource();
         
-        // Create tracer lines every few ticks
-        if (tickCounter % 4 == 0) { // Every 4 ticks = 5 times per second
-            createTracerLines(visibleTurtles, client);
+        try {
+            // Set up matrix transformations
+            poseStack.pushPose();
+            poseStack.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
+            
+            // Render highlight boxes around visible turtles
+            renderTurtleHighlights(poseStack, bufferSource, visibleTurtles);
+            
+            // Render tracer lines from player to visible turtles
+            renderTracerLines(poseStack, bufferSource, visibleTurtles, client);
+            
+            // Finish all rendering
+            bufferSource.endBatch();
+            
+        } catch (Exception e) {
+            TurtleTrackerMod.LOGGER.warn("Error rendering turtle effects: {}", e.getMessage());
+        } finally {
+            poseStack.popPose();
         }
         
-        // Log visible turtle information (only when count changes)
+        // Log count changes
         if (visibleTurtles.size() != lastVisibleCount) {
             lastVisibleCount = visibleTurtles.size();
-            TurtleTrackerMod.LOGGER.info("Highlighting {} visible turtles", visibleTurtles.size());
+            TurtleTrackerMod.LOGGER.info("Rendering {} visible turtles with highlights and lines", 
+                                       visibleTurtles.size());
         }
     }
     
     /**
-     * Apply basic visual effects using only safe methods
+     * Render highlight boxes using Minecraft's built-in line rendering
      */
-    private void applyBasicEffects(List<Turtle> visibleTurtles, Minecraft client) {
+    private void renderTurtleHighlights(PoseStack poseStack, MultiBufferSource bufferSource, List<Turtle> visibleTurtles) {
+        // Use Minecraft's built-in LINES render type
+        VertexConsumer buffer = bufferSource.getBuffer(RenderType.lines());
+        Matrix4f matrix = poseStack.last().pose();
+        
         for (Turtle turtle : visibleTurtles) {
-            try {
-                // Apply glow effect
-                turtle.setGlowingTag(true);
-                
-                // Add particle effects around the turtle every 8 ticks
-                if (tickCounter % 8 == 0) {
-                    Vec3 turtlePos = turtle.position();
-                    
-                    // Create a simple particle effect at turtle location
-                    client.level.addParticle(ParticleTypes.ELECTRIC_SPARK,
-                        turtlePos.x, 
-                        turtlePos.y + turtle.getBbHeight() + 0.3, 
-                        turtlePos.z,
-                        0.0, 0.1, 0.0);
-                    
-                    // Add particles in a cross pattern around the turtle
-                    double offset = 1.2;
-                    client.level.addParticle(ParticleTypes.END_ROD,
-                        turtlePos.x + offset, turtlePos.y + 0.5, turtlePos.z, 0.0, 0.0, 0.0);
-                    client.level.addParticle(ParticleTypes.END_ROD,
-                        turtlePos.x - offset, turtlePos.y + 0.5, turtlePos.z, 0.0, 0.0, 0.0);
-                    client.level.addParticle(ParticleTypes.END_ROD,
-                        turtlePos.x, turtlePos.y + 0.5, turtlePos.z + offset, 0.0, 0.0, 0.0);
-                    client.level.addParticle(ParticleTypes.END_ROD,
-                        turtlePos.x, turtlePos.y + 0.5, turtlePos.z - offset, 0.0, 0.0, 0.0);
-                }
-                
-            } catch (Exception e) {
-                TurtleTrackerMod.LOGGER.debug("Could not apply effect to turtle: {}", e.getMessage());
-            }
+            // Get turtle's bounding box and expand it slightly
+            AABB boundingBox = turtle.getBoundingBox();
+            AABB expandedBox = boundingBox.inflate(HIGHLIGHT_EXPANSION);
+            
+            // Convert to camera-relative coordinates (already handled by matrix translation)
+            drawHighlightBox(buffer, matrix, expandedBox, 0.0f, 1.0f, 0.0f, 0.8f); // Green color
         }
     }
     
     /**
-     * Create tracer lines using particles
+     * Draw a wireframe box using the new vertex system
      */
-    private void createTracerLines(List<Turtle> visibleTurtles, Minecraft client) {
-        // Get player eye position (where tracers start from)
+    private void drawHighlightBox(VertexConsumer buffer, Matrix4f matrix, AABB box, float r, float g, float b, float a) {
+        float minX = (float) box.minX;
+        float minY = (float) box.minY;
+        float minZ = (float) box.minZ;
+        float maxX = (float) box.maxX;
+        float maxY = (float) box.maxY;
+        float maxZ = (float) box.maxZ;
+        
+        // Bottom face edges (4 lines)
+        addLine(buffer, matrix, minX, minY, minZ, maxX, minY, minZ, r, g, b, a);
+        addLine(buffer, matrix, maxX, minY, minZ, maxX, minY, maxZ, r, g, b, a);
+        addLine(buffer, matrix, maxX, minY, maxZ, minX, minY, maxZ, r, g, b, a);
+        addLine(buffer, matrix, minX, minY, maxZ, minX, minY, minZ, r, g, b, a);
+        
+        // Top face edges (4 lines)
+        addLine(buffer, matrix, minX, maxY, minZ, maxX, maxY, minZ, r, g, b, a);
+        addLine(buffer, matrix, maxX, maxY, minZ, maxX, maxY, maxZ, r, g, b, a);
+        addLine(buffer, matrix, maxX, maxY, maxZ, minX, maxY, maxZ, r, g, b, a);
+        addLine(buffer, matrix, minX, maxY, maxZ, minX, maxY, minZ, r, g, b, a);
+        
+        // Vertical edges (4 lines)
+        addLine(buffer, matrix, minX, minY, minZ, minX, maxY, minZ, r, g, b, a);
+        addLine(buffer, matrix, maxX, minY, minZ, maxX, maxY, minZ, r, g, b, a);
+        addLine(buffer, matrix, maxX, minY, maxZ, maxX, maxY, maxZ, r, g, b, a);
+        addLine(buffer, matrix, minX, minY, maxZ, minX, maxY, maxZ, r, g, b, a);
+    }
+    
+    /**
+     * Add a line to the vertex buffer using the new 1.21.5 format
+     */
+    private void addLine(VertexConsumer buffer, Matrix4f matrix, 
+                        float x1, float y1, float z1, float x2, float y2, float z2, 
+                        float r, float g, float b, float a) {
+        buffer.addVertex(matrix, x1, y1, z1).setColor(r, g, b, a).setNormal(1.0f, 0.0f, 0.0f);
+        buffer.addVertex(matrix, x2, y2, z2).setColor(r, g, b, a).setNormal(1.0f, 0.0f, 0.0f);
+    }
+    
+    /**
+     * Render tracer lines from player to visible turtles
+     */
+    private void renderTracerLines(PoseStack poseStack, MultiBufferSource bufferSource, List<Turtle> visibleTurtles, Minecraft client) {
+        // Use Minecraft's built-in LINES render type
+        VertexConsumer buffer = bufferSource.getBuffer(RenderType.lines());
+        Matrix4f matrix = poseStack.last().pose();
+        
+        // Get player eye position
         Vec3 playerPos = client.player.position().add(0, client.player.getEyeHeight(), 0);
         
         for (Turtle turtle : visibleTurtles) {
             Vec3 turtlePos = turtle.position().add(0, turtle.getBbHeight() / 2, 0);
             double distance = playerPos.distanceTo(turtlePos);
             
-            if (distance <= MAX_TRACER_DISTANCE && distance > 3.0) {
-                createParticleTracer(client, playerPos, turtlePos);
+            if (distance <= MAX_TRACER_DISTANCE && distance > 2.0) { // Don't draw for very close turtles
+                // Calculate alpha based on distance (closer = more opaque)
+                float alpha = (float) Math.max(0.4, 1.0 - (distance / MAX_TRACER_DISTANCE));
+                
+                // Draw yellow tracer line
+                addLine(buffer, matrix, 
+                       (float)playerPos.x, (float)playerPos.y, (float)playerPos.z,
+                       (float)turtlePos.x, (float)turtlePos.y, (float)turtlePos.z,
+                       1.0f, 1.0f, 0.0f, alpha); // Yellow color
             }
-        }
-    }
-    
-    /**
-     * Create a simple tracer line with particles
-     */
-    private void createParticleTracer(Minecraft client, Vec3 start, Vec3 end) {
-        // Calculate the vector from start to end
-        Vec3 direction = end.subtract(start);
-        
-        // Create 4 particles along the line for a visible tracer
-        for (int i = 1; i <= 4; i++) {
-            double progress = (double) i / 5.0; // 1/5, 2/5, 3/5, 4/5 of the way
-            Vec3 particlePos = start.add(direction.scale(progress));
-            
-            // Use bright particles for the tracer line
-            client.level.addParticle(ParticleTypes.END_ROD,
-                particlePos.x, particlePos.y, particlePos.z,
-                0.0, 0.0, 0.0);
         }
     }
 }
