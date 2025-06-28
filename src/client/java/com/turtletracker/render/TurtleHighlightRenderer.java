@@ -134,30 +134,46 @@ public class TurtleHighlightRenderer {
     }
     
     /**
-     * Render tracer lines from player to visible turtles
+     * Render tracer lines from crosshair to visible turtles
      */
     private void renderTracerLines(PoseStack poseStack, MultiBufferSource bufferSource, List<Turtle> visibleTurtles, Minecraft client) {
         // Use Minecraft's built-in LINES render type
         VertexConsumer buffer = bufferSource.getBuffer(RenderType.lines());
         Matrix4f matrix = poseStack.last().pose();
         
-        // Get player eye position
-        Vec3 playerPos = client.player.position().add(0, client.player.getEyeHeight(), 0);
+        // Get crosshair position in world coordinates
+        Vec3 crosshairPos = getCrosshairWorldPosition(client);
         
         for (Turtle turtle : visibleTurtles) {
             Vec3 turtlePos = turtle.position().add(0, turtle.getBbHeight() / 2, 0);
-            double distance = playerPos.distanceTo(turtlePos);
+            double distance = crosshairPos.distanceTo(turtlePos);
             
             if (distance <= MAX_TRACER_DISTANCE && distance > 2.0) { // Don't draw for very close turtles
                 // Calculate alpha based on distance (closer = more opaque)
                 float alpha = (float) Math.max(0.4, 1.0 - (distance / MAX_TRACER_DISTANCE));
                 
-                // Draw yellow tracer line
+                // Draw yellow tracer line from crosshair to turtle
                 addLine(buffer, matrix, 
-                       (float)playerPos.x, (float)playerPos.y, (float)playerPos.z,
+                       (float)crosshairPos.x, (float)crosshairPos.y, (float)crosshairPos.z,
                        (float)turtlePos.x, (float)turtlePos.y, (float)turtlePos.z,
                        1.0f, 1.0f, 0.0f, alpha); // Yellow color
             }
         }
+    }
+    
+    /**
+     * Calculate the world position where the crosshair is pointing
+     * This creates a point in front of the player in the direction they're looking
+     */
+    private Vec3 getCrosshairWorldPosition(Minecraft client) {
+        // Get player eye position and look direction
+        Vec3 eyePos = client.player.position().add(0, client.player.getEyeHeight(), 0);
+        Vec3 lookDirection = client.player.getLookAngle();
+        
+        // Project the crosshair position a short distance in front of the player
+        // This makes the lines appear to come from the crosshair area
+        double projectionDistance = 1.5; // Distance in front of player
+        
+        return eyePos.add(lookDirection.scale(projectionDistance));
     }
 }
