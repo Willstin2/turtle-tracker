@@ -10,23 +10,18 @@ import com.turtletracker.TurtleTrackerMod;
 import java.util.List;
 
 /**
- * Turtle renderer that uses particles to create tracer effects
- * This approach should be safer than custom OpenGL rendering
+ * Minimal turtle renderer that uses only guaranteed-working effects
+ * Focuses on glow + simple particle tracers
  */
 public class TurtleHighlightRenderer {
     
     private static final double MAX_TRACER_DISTANCE = 48.0;
-    private static final int PARTICLES_PER_LINE = 8; // Number of particles along each tracer line
     private int tickCounter = 0;
     private int lastVisibleCount = -1;
 
     /**
      * Main render method called during world rendering
-     * Creates particle tracers and glow effects for visible turtles
-     * 
-     * @param context World render context providing camera and matrix information
-     * @param visibleTurtles List of turtles that are visible to the player (LOS check passed)
-     * @param allTurtles List of all turtles (including those behind walls)
+     * Applies basic glow and particle effects to visible turtles
      */
     public void render(WorldRenderContext context, List<Turtle> visibleTurtles, List<Turtle> allTurtles) {
         // Only render effects for visible turtles (those that pass line-of-sight check)
@@ -41,41 +36,66 @@ public class TurtleHighlightRenderer {
         Minecraft client = Minecraft.getInstance();
         if (client.player == null || client.level == null) return;
         
-        // Increment tick counter for animation timing
+        // Increment tick counter
         tickCounter++;
         
-        // Apply glow effects to visible turtles
-        applyTurtleGlow(visibleTurtles);
+        // Apply basic visual effects to make turtles stand out
+        applyBasicEffects(visibleTurtles, client);
         
-        // Create particle tracers every few ticks (not every tick to avoid spam)
-        if (tickCounter % 3 == 0) { // Every 3 ticks = ~6 times per second
-            createParticleTracers(visibleTurtles, client);
+        // Create tracer lines every few ticks
+        if (tickCounter % 4 == 0) { // Every 4 ticks = 5 times per second
+            createTracerLines(visibleTurtles, client);
         }
         
         // Log visible turtle information (only when count changes)
         if (visibleTurtles.size() != lastVisibleCount) {
             lastVisibleCount = visibleTurtles.size();
-            TurtleTrackerMod.LOGGER.info("Tracking {} visible turtles with glow + particle tracers", 
-                                       visibleTurtles.size());
+            TurtleTrackerMod.LOGGER.info("Highlighting {} visible turtles", visibleTurtles.size());
         }
     }
     
     /**
-     * Apply glow effects to make visible turtles stand out
+     * Apply basic visual effects using only safe methods
      */
-    private void applyTurtleGlow(List<Turtle> visibleTurtles) {
+    private void applyBasicEffects(List<Turtle> visibleTurtles, Minecraft client) {
         for (Turtle turtle : visibleTurtles) {
-            // Make the turtle glow using Minecraft's built-in glow effect
-            if (!turtle.hasGlowingTag()) {
+            try {
+                // Apply glow effect
                 turtle.setGlowingTag(true);
+                
+                // Add particle effects around the turtle every 8 ticks
+                if (tickCounter % 8 == 0) {
+                    Vec3 turtlePos = turtle.position();
+                    
+                    // Create a simple particle effect at turtle location
+                    client.level.addParticle(ParticleTypes.ELECTRIC_SPARK,
+                        turtlePos.x, 
+                        turtlePos.y + turtle.getBbHeight() + 0.3, 
+                        turtlePos.z,
+                        0.0, 0.1, 0.0);
+                    
+                    // Add particles in a cross pattern around the turtle
+                    double offset = 1.2;
+                    client.level.addParticle(ParticleTypes.END_ROD,
+                        turtlePos.x + offset, turtlePos.y + 0.5, turtlePos.z, 0.0, 0.0, 0.0);
+                    client.level.addParticle(ParticleTypes.END_ROD,
+                        turtlePos.x - offset, turtlePos.y + 0.5, turtlePos.z, 0.0, 0.0, 0.0);
+                    client.level.addParticle(ParticleTypes.END_ROD,
+                        turtlePos.x, turtlePos.y + 0.5, turtlePos.z + offset, 0.0, 0.0, 0.0);
+                    client.level.addParticle(ParticleTypes.END_ROD,
+                        turtlePos.x, turtlePos.y + 0.5, turtlePos.z - offset, 0.0, 0.0, 0.0);
+                }
+                
+            } catch (Exception e) {
+                TurtleTrackerMod.LOGGER.debug("Could not apply effect to turtle: {}", e.getMessage());
             }
         }
     }
     
     /**
-     * Create particle tracers from player to visible turtles
+     * Create tracer lines using particles
      */
-    private void createParticleTracers(List<Turtle> visibleTurtles, Minecraft client) {
+    private void createTracerLines(List<Turtle> visibleTurtles, Minecraft client) {
         // Get player eye position (where tracers start from)
         Vec3 playerPos = client.player.position().add(0, client.player.getEyeHeight(), 0);
         
@@ -83,46 +103,28 @@ public class TurtleHighlightRenderer {
             Vec3 turtlePos = turtle.position().add(0, turtle.getBbHeight() / 2, 0);
             double distance = playerPos.distanceTo(turtlePos);
             
-            if (distance <= MAX_TRACER_DISTANCE && distance > 2.0) { // Don't draw for very close turtles
-                createParticleLine(client, playerPos, turtlePos, distance);
+            if (distance <= MAX_TRACER_DISTANCE && distance > 3.0) {
+                createParticleTracer(client, playerPos, turtlePos);
             }
         }
     }
     
     /**
-     * Create a line of particles between two points
+     * Create a simple tracer line with particles
      */
-    private void createParticleLine(Minecraft client, Vec3 start, Vec3 end, double distance) {
+    private void createParticleTracer(Minecraft client, Vec3 start, Vec3 end) {
         // Calculate the vector from start to end
         Vec3 direction = end.subtract(start);
         
-        // Create particles along the line
-        for (int i = 1; i < PARTICLES_PER_LINE; i++) { // Skip start and end points
-            double progress = (double) i / PARTICLES_PER_LINE;
+        // Create 4 particles along the line for a visible tracer
+        for (int i = 1; i <= 4; i++) {
+            double progress = (double) i / 5.0; // 1/5, 2/5, 3/5, 4/5 of the way
             Vec3 particlePos = start.add(direction.scale(progress));
             
-            // Use different particle types based on distance for visual variety
-            if (distance < 16.0) {
-                // Close turtles: bright yellow particles
-                client.level.addParticle(ParticleTypes.END_ROD,
-                    particlePos.x, particlePos.y, particlePos.z,
-                    0.0, 0.0, 0.0);
-            } else if (distance < 32.0) {
-                // Medium distance: electric spark particles
-                client.level.addParticle(ParticleTypes.ELECTRIC_SPARK,
-                    particlePos.x, particlePos.y, particlePos.z,
-                    0.0, 0.0, 0.0);
-            } else {
-                // Far turtles: enchanting glyphs
-                client.level.addParticle(ParticleTypes.ENCHANT,
-                    particlePos.x, particlePos.y, particlePos.z,
-                    0.0, 0.1, 0.0);
-            }
+            // Use bright particles for the tracer line
+            client.level.addParticle(ParticleTypes.END_ROD,
+                particlePos.x, particlePos.y, particlePos.z,
+                0.0, 0.0, 0.0);
         }
-        
-        // Add a special particle at the turtle location for emphasis
-        client.level.addParticle(ParticleTypes.TOTEM_OF_UNDYING,
-            end.x, end.y, end.z,
-            0.0, 0.0, 0.0);
     }
 }
