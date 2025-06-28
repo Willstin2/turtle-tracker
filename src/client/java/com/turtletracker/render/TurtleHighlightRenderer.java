@@ -14,16 +14,24 @@ import org.joml.Matrix4f;
 import com.turtletracker.TurtleTrackerMod;
 
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Working turtle renderer for Minecraft 1.21.5 using the new RenderLayer system
- * Creates highlighted boxes and tracer lines for visible turtles
+ * Creates highlighted boxes and smooth tracer lines for visible turtles
  */
 public class TurtleHighlightRenderer {
     
     private static final double MAX_TRACER_DISTANCE = 48.0;
     private static final float HIGHLIGHT_EXPANSION = 0.3f; // How much to expand the highlight box
+    private static final float SMOOTHING_FACTOR = 0.15f; // Lower = smoother but more lag, higher = more responsive
+    
     private int lastVisibleCount = -1;
+    
+    // Smoothing cache for jitter reduction
+    private Vec3 lastCrosshairPos = Vec3.ZERO;
+    private final Map<Integer, Vec3> smoothedTurtlePositions = new HashMap<>();
 
     /**
      * Main render method using the new 1.21.5 rendering system
@@ -32,6 +40,7 @@ public class TurtleHighlightRenderer {
         if (visibleTurtles.isEmpty()) {
             if (lastVisibleCount > 0) {
                 lastVisibleCount = 0;
+                smoothedTurtlePositions.clear(); // Clear cache when no turtles
                 TurtleTrackerMod.LOGGER.debug("No visible turtles");
             }
             return;
@@ -55,8 +64,8 @@ public class TurtleHighlightRenderer {
             // Render highlight boxes around visible turtles
             renderTurtleHighlights(poseStack, bufferSource, visibleTurtles);
             
-            // Render tracer lines from player to visible turtles
-            renderTracerLines(poseStack, bufferSource, visibleTurtles, client);
+            // Render smooth tracer lines from player to visible turtles
+            renderSmoothTracerLines(poseStack, bufferSource, visibleTurtles, client);
             
             // Finish all rendering
             bufferSource.endBatch();
@@ -134,31 +143,70 @@ public class TurtleHighlightRenderer {
     }
     
     /**
-     * Render tracer lines from crosshair to visible turtles
+     * Render smooth tracer lines from crosshair to visible turtles
+     * Uses interpolation to reduce jitter when moving fast
      */
-    private void renderTracerLines(PoseStack poseStack, MultiBufferSource bufferSource, List<Turtle> visibleTurtles, Minecraft client) {
+    private void renderSmoothTracerLines(PoseStack poseStack, MultiBufferSource bufferSource, List<Turtle> visibleTurtles, Minecraft client) {
         // Use Minecraft's built-in LINES render type
         VertexConsumer buffer = bufferSource.getBuffer(RenderType.lines());
         Matrix4f matrix = poseStack.last().pose();
         
-        // Get crosshair position in world coordinates
-        Vec3 crosshairPos = getCrosshairWorldPosition(client);
+        // Get and smooth crosshair position
+        Vec3 targetCrosshairPos = getCrosshairWorldPosition(client);
+        Vec3 smoothedCrosshairPos = smoothPosition(lastCrosshairPos, targetCrosshairPos, SMOOTHING_FACTOR);
+        lastCrosshairPos = smoothedCrosshairPos;
         
         for (Turtle turtle : visibleTurtles) {
-            Vec3 turtlePos = turtle.position().add(0, turtle.getBbHeight() / 2, 0);
-            double distance = crosshairPos.distanceTo(turtlePos);
+            int turtleId = turtle.getId();
+            Vec3 targetTurtlePos = turtle.position().add(0, turtle.getBbHeight() / 2, 0);
+            
+            // Smooth turtle position to reduce jitter
+            Vec3 lastTurtlePos = smoothedTurtlePositions.getOrDefault(turtleId, targetTurtlePos);
+            Vec3 smoothedTurtlePos = smoothPosition(lastTurtlePos, targetTurtlePos, SMOOTHING_FACTOR);
+            smoothedTurtlePositions.put(turtleId, smoothedTurtlePos);
+            
+            double distance = smoothedCrosshairPos.distanceTo(smoothedTurtlePos);
             
             if (distance <= MAX_TRACER_DISTANCE && distance > 2.0) { // Don't draw for very close turtles
                 // Calculate alpha based on distance (closer = more opaque)
                 float alpha = (float) Math.max(0.4, 1.0 - (distance / MAX_TRACER_DISTANCE));
                 
-                // Draw yellow tracer line from crosshair to turtle
+                // Draw yellow tracer line from smoothed crosshair to smoothed turtle position
                 addLine(buffer, matrix, 
-                       (float)crosshairPos.x, (float)crosshairPos.y, (float)crosshairPos.z,
-                       (float)turtlePos.x, (float)turtlePos.y, (float)turtlePos.z,
+                       (float)smoothedCrosshairPos.x, (float)smoothedCrosshairPos.y, (float)smoothedCrosshairPos.z,
+                       (float)smoothedTurtlePos.x, (float)smoothedTurtlePos.y, (float)smoothedTurtlePos.z,
                        1.0f, 1.0f, 0.0f, alpha); // Yellow color
             }
         }
+        
+        // Clean up positions for turtles that are no longer visible
+        cleanupOldPositions(visibleTurtles);
+    }
+    
+    /**
+     * Smooth position interpolation to reduce jitter
+     * Uses linear interpolation (lerp) between old and new positions
+     */
+    private Vec3 smoothPosition(Vec3 oldPos, Vec3 newPos, float factor) {
+        if (oldPos.equals(Vec3.ZERO)) {
+            return newPos; // First frame, no smoothing needed
+        }
+        
+        // Linear interpolation: old + (new - old) * factor
+        return oldPos.add(newPos.subtract(oldPos).scale(factor));
+    }
+    
+    /**
+     * Remove cached positions for turtles that are no longer visible
+     */
+    private void cleanupOldPositions(List<Turtle> visibleTurtles) {
+        // Get IDs of currently visible turtles
+        var currentIds = visibleTurtles.stream()
+            .map(Turtle::getId)
+            .collect(java.util.stream.Collectors.toSet());
+        
+        // Remove cached positions for turtles that are no longer visible
+        smoothedTurtlePositions.entrySet().removeIf(entry -> !currentIds.contains(entry.getKey()));
     }
     
     /**
