@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "turtle_tracker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Turtle Tracker",
   "description": "A mod that tracks and highlights sea turtles around the player",
   "authors": [
